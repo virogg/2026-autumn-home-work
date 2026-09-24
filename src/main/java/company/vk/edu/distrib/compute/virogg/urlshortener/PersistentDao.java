@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import company.vk.edu.distrib.compute.Dao;
 
@@ -31,6 +33,7 @@ public final class PersistentDao implements Dao<String> {
     private final ConcurrentMap<String, String> data = new ConcurrentHashMap<>();
     private final FileChannel lock;
     private final FileChannel log;
+    private final Lock writeLock = new ReentrantLock();
 
     public PersistentDao(Path dir, String fileName) throws IOException {
         this.dir = Files.createDirectories(dir);
@@ -60,16 +63,28 @@ public final class PersistentDao implements Dao<String> {
     }
 
     @Override
-    public synchronized void upsert(String key, String value) throws IOException {
-        append(upsertRecord(requireKey(key), value));
-        data.put(key, value);
+    public void upsert(String key, String value) throws IOException {
+        String record = upsertRecord(requireKey(key), value);
+        writeLock.lock();
+        try {
+            append(record);
+            data.put(key, value);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     @Override
-    public synchronized void delete(String key) throws IOException {
-        if (data.containsKey(requireKey(key))) {
-            append(String.join(SEPARATOR, DELETE, encode(key), END));
-            data.remove(key);
+    public void delete(String key) throws IOException {
+        requireKey(key);
+        writeLock.lock();
+        try {
+            if (data.containsKey(key)) {
+                append(String.join(SEPARATOR, DELETE, encode(key), END));
+                data.remove(key);
+            }
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -78,9 +93,12 @@ public final class PersistentDao implements Dao<String> {
     }
 
     @Override
-    public synchronized void close() throws IOException {
+    public void close() throws IOException {
+        writeLock.lock();
         try (lock) {
             log.close();
+        } finally {
+            writeLock.unlock();
         }
     }
 
@@ -122,7 +140,7 @@ public final class PersistentDao implements Dao<String> {
         Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         try (FileChannel directory = FileChannel.open(dir, StandardOpenOption.READ)) {
             directory.force(true);
-        } catch (AccessDeniedException _) {
+        } catch (AccessDeniedException expected) {
         }
     }
 
@@ -131,7 +149,7 @@ public final class PersistentDao implements Dao<String> {
             if (lock.tryLock() != null) {
                 return;
             }
-        } catch (OverlappingFileLockException _) {
+        } catch (OverlappingFileLockException expected) {
         }
         throw new IOException(fileName + " is already used by another instance");
     }
