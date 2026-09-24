@@ -16,8 +16,6 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import company.vk.edu.distrib.compute.Dao;
 
@@ -31,24 +29,23 @@ public final class PersistentDao implements Dao<String> {
 
     private final Path dir;
     private final ConcurrentMap<String, String> data = new ConcurrentHashMap<>();
-    private final FileChannel lockFile;
-    private final FileChannel journal;
-    private final Lock writeLock = new ReentrantLock();
+    private final FileChannel lock;
+    private final FileChannel log;
 
     public PersistentDao(Path dir, String fileName) throws IOException {
         this.dir = Files.createDirectories(dir);
-        this.lockFile = FileChannel.open(dir.resolve(fileName + ".lock"),
+        this.lock = FileChannel.open(dir.resolve(fileName + ".lock"),
             StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         try {
-            acquire(lockFile, fileName);
+            acquire(lock, fileName);
             Path file = dir.resolve(fileName);
             if (Files.exists(file)) {
                 replay(file);
             }
             compact(file, dir.resolve(fileName + ".tmp"));
-            this.journal = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            this.log = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException | RuntimeException e) {
-            lockFile.close();
+            lock.close();
             throw e;
         }
     }
@@ -63,28 +60,16 @@ public final class PersistentDao implements Dao<String> {
     }
 
     @Override
-    public void upsert(String key, String value) throws IOException {
-        String record = upsertRecord(requireKey(key), value);
-        writeLock.lock();
-        try {
-            append(record);
-            data.put(key, value);
-        } finally {
-            writeLock.unlock();
-        }
+    public synchronized void upsert(String key, String value) throws IOException {
+        append(upsertRecord(requireKey(key), value));
+        data.put(key, value);
     }
 
     @Override
-    public void delete(String key) throws IOException {
-        requireKey(key);
-        writeLock.lock();
-        try {
-            if (data.containsKey(key)) {
-                append(String.join(SEPARATOR, DELETE, encode(key), END));
-                data.remove(key);
-            }
-        } finally {
-            writeLock.unlock();
+    public synchronized void delete(String key) throws IOException {
+        if (data.containsKey(requireKey(key))) {
+            append(String.join(SEPARATOR, DELETE, encode(key), END));
+            data.remove(key);
         }
     }
 
@@ -93,22 +78,19 @@ public final class PersistentDao implements Dao<String> {
     }
 
     @Override
-    public void close() throws IOException {
-        writeLock.lock();
-        try (lockFile) {
-            journal.close();
-        } finally {
-            writeLock.unlock();
+    public synchronized void close() throws IOException {
+        try (lock) {
+            log.close();
         }
     }
 
     private void append(String record) throws IOException {
-        long size = journal.size();
+        long size = log.size();
         try {
-            writeFully(journal, record);
-            journal.force(false);
+            writeFully(log, record);
+            log.force(false);
         } catch (IOException e) {
-            journal.truncate(size);
+            log.truncate(size);
             throw e;
         }
     }
@@ -140,16 +122,16 @@ public final class PersistentDao implements Dao<String> {
         Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         try (FileChannel directory = FileChannel.open(dir, StandardOpenOption.READ)) {
             directory.force(true);
-        } catch (AccessDeniedException expected) {
+        } catch (AccessDeniedException _) {
         }
     }
 
-    private static void acquire(FileChannel lockFile, String fileName) throws IOException {
+    private static void acquire(FileChannel lock, String fileName) throws IOException {
         try {
-            if (lockFile.tryLock() != null) {
+            if (lock.tryLock() != null) {
                 return;
             }
-        } catch (OverlappingFileLockException expected) {
+        } catch (OverlappingFileLockException _) {
         }
         throw new IOException(fileName + " is already used by another instance");
     }

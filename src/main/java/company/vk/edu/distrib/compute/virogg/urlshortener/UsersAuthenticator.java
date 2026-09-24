@@ -46,9 +46,7 @@ public final class UsersAuthenticator extends BasicAuthenticator {
         } catch (NoSuchElementException | IllegalArgumentException e) {
             return false;
         } catch (IOException e) {
-            if (log.isErrorEnabled()) {
-                log.error("Failed to read credentials for {}", username, e);
-            }
+            log.error("Failed to read credentials for {}", username, e);
             return false;
         }
         byte[] expected = stored.getBytes(StandardCharsets.UTF_8);
