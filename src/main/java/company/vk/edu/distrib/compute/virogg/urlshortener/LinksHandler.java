@@ -8,6 +8,8 @@ import java.net.URISyntaxException;
 import java.security.SecureRandom;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,12 +24,13 @@ public final class LinksHandler implements HttpHandler {
     private static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private static final int ID_LENGTH = 10;
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{" + ID_LENGTH + "}");
-    private static final Set<String> ITEM_METHODS = Set.of("GET", "PUT", "DELETE");
+    private static final Set<String> ITEM_METHODS = Set.of(HttpUtils.GET, HttpUtils.PUT, HttpUtils.DELETE);
     private static final Pattern AUTHORITY = Pattern.compile("(?:[^@]*@)?([^:@\\[\\]]+)(?::\\d*)?");
 
     private final Dao<String> links;
     private final String shortLinkPrefix;
     private final SecureRandom random = new SecureRandom();
+    private final Lock writeLock = new ReentrantLock();
 
     public LinksHandler(Dao<String> links, int port) {
         this.links = links;
@@ -39,7 +42,7 @@ public final class LinksHandler implements HttpHandler {
         String path = exchange.getRequestURI().getPath();
         String method = exchange.getRequestMethod();
         if (BASE_PATH.equals(path)) {
-            if ("POST".equals(method)) {
+            if (HttpUtils.POST.equals(method)) {
                 create(exchange);
             } else {
                 HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
@@ -60,8 +63,8 @@ public final class LinksHandler implements HttpHandler {
             return;
         }
         switch (method) {
-            case "GET" -> get(exchange, id);
-            case "PUT" -> update(exchange, id);
+            case HttpUtils.GET -> get(exchange, id);
+            case HttpUtils.PUT -> update(exchange, id);
             default -> {
                 remove(id);
                 HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_ACCEPTED);
@@ -70,7 +73,7 @@ public final class LinksHandler implements HttpHandler {
     }
 
     public void redirect(HttpExchange exchange) throws IOException {
-        if (!"GET".equals(exchange.getRequestMethod())) {
+        if (!HttpUtils.GET.equals(exchange.getRequestMethod())) {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
             return;
         }
@@ -94,12 +97,10 @@ public final class LinksHandler implements HttpHandler {
     }
 
     private void create(HttpExchange exchange) throws IOException {
-        String link = HttpUtils.readBody(exchange).strip();
-        if (!isValidLink(link)) {
-            HttpUtils.sendEmpty(exchange, HttpUtils.HTTP_UNPROCESSABLE_CONTENT);
-            return;
+        String link = readValidLink(exchange);
+        if (link != null) {
+            HttpUtils.sendText(exchange, HttpURLConnection.HTTP_CREATED, shortLinkPrefix + storeWithNewId(link));
         }
-        HttpUtils.sendText(exchange, HttpURLConnection.HTTP_CREATED, shortLinkPrefix + storeWithNewId(link));
     }
 
     private void get(HttpExchange exchange, String id) throws IOException {
@@ -112,34 +113,56 @@ public final class LinksHandler implements HttpHandler {
     }
 
     private void update(HttpExchange exchange, String id) throws IOException {
+        String link = readValidLink(exchange);
+        if (link != null) {
+            boolean updated = replaceExisting(id, link);
+            HttpUtils.sendEmpty(exchange, updated ? HttpURLConnection.HTTP_OK : HttpURLConnection.HTTP_NOT_FOUND);
+        }
+    }
+
+    private @Nullable String readValidLink(HttpExchange exchange) throws IOException {
         String link = HttpUtils.readBody(exchange).strip();
-        if (!isValidLink(link)) {
-            HttpUtils.sendEmpty(exchange, HttpUtils.HTTP_UNPROCESSABLE_CONTENT);
-            return;
+        if (isValidLink(link)) {
+            return link;
         }
-        boolean updated = replaceExisting(id, link);
-        HttpUtils.sendEmpty(exchange, updated ? HttpURLConnection.HTTP_OK : HttpURLConnection.HTTP_NOT_FOUND);
+        HttpUtils.sendEmpty(exchange, HttpUtils.HTTP_UNPROCESSABLE_CONTENT);
+        return null;
     }
 
-    private synchronized String storeWithNewId(String link) throws IOException {
-        String id = newId();
-        while (find(id) != null) {
-            id = newId();
+    private String storeWithNewId(String link) throws IOException {
+        writeLock.lock();
+        try {
+            String id = newId();
+            while (find(id) != null) {
+                id = newId();
+            }
+            links.upsert(id, link);
+            return id;
+        } finally {
+            writeLock.unlock();
         }
-        links.upsert(id, link);
-        return id;
     }
 
-    private synchronized boolean replaceExisting(String id, String link) throws IOException {
-        if (find(id) == null) {
-            return false;
+    private boolean replaceExisting(String id, String link) throws IOException {
+        writeLock.lock();
+        try {
+            if (find(id) == null) {
+                return false;
+            }
+            links.upsert(id, link);
+            return true;
+        } finally {
+            writeLock.unlock();
         }
-        links.upsert(id, link);
-        return true;
     }
 
-    private synchronized void remove(String id) throws IOException {
-        links.delete(id);
+    private void remove(String id) throws IOException {
+        writeLock.lock();
+        try {
+            links.delete(id);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     private @Nullable String find(String id) throws IOException {

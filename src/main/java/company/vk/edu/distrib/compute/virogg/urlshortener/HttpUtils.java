@@ -13,6 +13,10 @@ import org.slf4j.LoggerFactory;
 
 public final class HttpUtils {
     public static final int HTTP_UNPROCESSABLE_CONTENT = 422;
+    public static final String GET = "GET";
+    public static final String POST = "POST";
+    public static final String PUT = "PUT";
+    public static final String DELETE = "DELETE";
     private static final int MAX_BODY_BYTES = 8 * 1024;
     private static final int NO_BODY = -1;
     private static final Logger log = LoggerFactory.getLogger(HttpUtils.class);
@@ -46,7 +50,9 @@ public final class HttpUtils {
                 try {
                     handler.handle(exchange);
                 } catch (IOException | RuntimeException e) {
-                    log.error("Failed to handle {} {}", exchange.getRequestMethod(), exchange.getRequestURI(), e);
+                    if (log.isErrorEnabled()) {
+                        log.error("Failed to handle {} {}", exchange.getRequestMethod(), exchange.getRequestURI(), e);
+                    }
                     if (exchange.getResponseCode() == NO_BODY) {
                         sendEmpty(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR);
                     }

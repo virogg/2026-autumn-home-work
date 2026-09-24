@@ -7,6 +7,8 @@ import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -14,8 +16,11 @@ import company.vk.edu.distrib.compute.urlshortener.UrlShortenerService;
 import org.jspecify.annotations.Nullable;
 
 public final class UrlShortenerServiceImpl implements UrlShortenerService {
+    private static final String STATUS_PATH = "/v0/status";
+
     private final int port;
     private final Path dataDir;
+    private final Lock lifecycle = new ReentrantLock();
     @Nullable
     private PersistentDao links;
     @Nullable
@@ -31,17 +36,43 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
     }
 
     @Override
-    public synchronized void start() {
-        if (server != null) {
-            throw new IllegalStateException("Service has already been started");
+    public void start() {
+        lifecycle.lock();
+        try {
+            if (server != null) {
+                throw new IllegalStateException("Service has already been started");
+            }
+            server = openAndCreateServer();
+        } finally {
+            lifecycle.unlock();
         }
+    }
 
+    @Override
+    public void stop() {
+        lifecycle.lock();
+        try {
+            if (server != null) {
+                server.stop(0);
+                server = null;
+            }
+            if (executor != null) {
+                executor.shutdown();
+                executor = null;
+            }
+            closeStorage();
+        } finally {
+            lifecycle.unlock();
+        }
+    }
+
+    private HttpServer openAndCreateServer() {
         try {
             PersistentDao linksDao = new PersistentDao(dataDir, "links.log");
             links = linksDao;
             PersistentDao usersDao = new PersistentDao(dataDir, "users.log");
             users = usersDao;
-            server = createServer(linksDao, usersDao);
+            return createServer(linksDao, usersDao);
         } catch (IOException e) {
             closeStorage();
             throw new UncheckedIOException("Failed to start urlshortener service on port " + port, e);
@@ -51,23 +82,10 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
         }
     }
 
-    @Override
-    public synchronized void stop() {
-        if (server != null) {
-            server.stop(0);
-            server = null;
-        }
-        if (executor != null) {
-            executor.shutdown();
-            executor = null;
-        }
-        closeStorage();
-    }
-
     private HttpServer createServer(PersistentDao linksDao, PersistentDao usersDao) throws IOException {
         HttpServer httpServer = HttpServer.create(new InetSocketAddress(port), 0);
         LinksHandler linksHandler = new LinksHandler(linksDao, port);
-        httpServer.createContext("/v0/status", HttpUtils.safe(exchange -> status(exchange, linksDao, usersDao)));
+        httpServer.createContext(STATUS_PATH, HttpUtils.safe(exchange -> status(exchange, linksDao, usersDao)));
         httpServer.createContext("/v0/links", HttpUtils.safe(linksHandler))
             .setAuthenticator(new UsersAuthenticator(usersDao));
         httpServer.createContext("/internal/users", HttpUtils.safe(new UsersHandler(usersDao)));
@@ -79,7 +97,10 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
     }
 
     private void closeStorage() {
-        try (PersistentDao _ = links; PersistentDao _ = users) {
+        try (PersistentDao _ = links) {
+            if (users != null) {
+                users.close();
+            }
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to close storage", e);
         } finally {
@@ -90,11 +111,11 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
 
     private static void status(HttpExchange exchange, PersistentDao linksDao, PersistentDao usersDao)
         throws IOException {
-        if (!"/v0/status".equals(exchange.getRequestURI().getPath())) {
+        if (!STATUS_PATH.equals(exchange.getRequestURI().getPath())) {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
             return;
         }
-        if (!"GET".equals(exchange.getRequestMethod())) {
+        if (!HttpUtils.GET.equals(exchange.getRequestMethod())) {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
             return;
         }
