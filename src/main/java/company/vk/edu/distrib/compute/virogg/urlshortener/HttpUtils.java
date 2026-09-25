@@ -19,6 +19,7 @@ public final class HttpUtils {
     public static final String DELETE = "DELETE";
     private static final int MAX_BODY_BYTES = 8 * 1024;
     private static final int NO_BODY = -1;
+    private static final int NOT_SENT = -1;
     private static final Logger log = LoggerFactory.getLogger(HttpUtils.class);
 
     private HttpUtils() {
@@ -37,6 +38,18 @@ public final class HttpUtils {
         }
     }
 
+    public static boolean accepts(HttpExchange exchange, String path, String method) throws IOException {
+        if (!path.equals(exchange.getRequestURI().getPath())) {
+            sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
+            return false;
+        }
+        if (!method.equals(exchange.getRequestMethod())) {
+            sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
+            return false;
+        }
+        return true;
+    }
+
     public static String readBody(HttpExchange exchange) throws IOException {
         try (InputStream is = exchange.getRequestBody()) {
             byte[] bytes = is.readNBytes(MAX_BODY_BYTES + 1);
@@ -53,7 +66,7 @@ public final class HttpUtils {
                     if (log.isErrorEnabled()) {
                         log.error("Failed to handle {} {}", exchange.getRequestMethod(), exchange.getRequestURI(), e);
                     }
-                    if (exchange.getResponseCode() == NO_BODY) {
+                    if (exchange.getResponseCode() == NOT_SENT) {
                         sendEmpty(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR);
                     }
                 }

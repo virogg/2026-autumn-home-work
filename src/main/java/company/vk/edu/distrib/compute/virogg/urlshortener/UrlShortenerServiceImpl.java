@@ -42,7 +42,9 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
             if (server != null) {
                 throw new IllegalStateException("Service has already been started");
             }
-            server = openAndCreateServer();
+            ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
+            executor = workers;
+            server = openAndCreateServer(workers);
         } finally {
             lifecycle.unlock();
         }
@@ -56,44 +58,48 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
                 server.stop(0);
                 server = null;
             }
-            if (executor != null) {
-                executor.shutdown();
-                executor = null;
-            }
-            closeStorage();
+            releaseResources();
         } finally {
             lifecycle.unlock();
         }
     }
 
-    private HttpServer openAndCreateServer() {
+    private HttpServer openAndCreateServer(ExecutorService workers) {
         try {
             PersistentDao linksDao = new PersistentDao(dataDir, "links.log");
             links = linksDao;
             PersistentDao usersDao = new PersistentDao(dataDir, "users.log");
             users = usersDao;
-            return createServer(linksDao, usersDao);
+            return createServer(linksDao, usersDao, workers);
         } catch (IOException e) {
-            closeStorage();
+            releaseResources();
             throw new UncheckedIOException("Failed to start urlshortener service on port " + port, e);
         } catch (RuntimeException e) {
-            closeStorage();
+            releaseResources();
             throw e;
         }
     }
 
-    private HttpServer createServer(PersistentDao linksDao, PersistentDao usersDao) throws IOException {
+    private HttpServer createServer(PersistentDao linksDao, PersistentDao usersDao, ExecutorService workers)
+        throws IOException {
         HttpServer httpServer = HttpServer.create(new InetSocketAddress(port), 0);
         LinksHandler linksHandler = new LinksHandler(linksDao, port);
         httpServer.createContext(STATUS_PATH, HttpUtils.safe(exchange -> status(exchange, linksDao, usersDao)));
-        httpServer.createContext("/v0/links", HttpUtils.safe(linksHandler))
+        httpServer.createContext(LinksHandler.BASE_PATH, HttpUtils.safe(linksHandler))
             .setAuthenticator(new UsersAuthenticator(usersDao));
-        httpServer.createContext("/internal/users", HttpUtils.safe(new UsersHandler(usersDao)));
+        httpServer.createContext(UsersHandler.PATH, HttpUtils.safe(new UsersHandler(usersDao)));
         httpServer.createContext("/", HttpUtils.safe(linksHandler::redirect));
-        executor = Executors.newVirtualThreadPerTaskExecutor();
-        httpServer.setExecutor(executor);
+        httpServer.setExecutor(workers);
         httpServer.start();
         return httpServer;
+    }
+
+    private void releaseResources() {
+        if (executor != null) {
+            executor.close();
+            executor = null;
+        }
+        closeStorage();
     }
 
     private void closeStorage() {
@@ -111,12 +117,7 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
 
     private static void status(HttpExchange exchange, PersistentDao linksDao, PersistentDao usersDao)
         throws IOException {
-        if (!STATUS_PATH.equals(exchange.getRequestURI().getPath())) {
-            HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
-            return;
-        }
-        if (!HttpUtils.GET.equals(exchange.getRequestMethod())) {
-            HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
+        if (!HttpUtils.accepts(exchange, STATUS_PATH, HttpUtils.GET)) {
             return;
         }
         boolean healthy = linksDao.isWritable() && usersDao.isWritable();

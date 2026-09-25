@@ -5,9 +5,9 @@ import java.net.HttpURLConnection;
 import java.net.IDN;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.security.SecureRandom;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -19,9 +19,8 @@ import company.vk.edu.distrib.compute.Dao;
 import org.jspecify.annotations.Nullable;
 
 public final class LinksHandler implements HttpHandler {
-    private static final String BASE_PATH = "/v0/links";
+    static final String BASE_PATH = "/v0/links";
     private static final String ITEM_PREFIX = BASE_PATH + "/";
-    private static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private static final int ID_LENGTH = 10;
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{" + ID_LENGTH + "}");
     private static final Set<String> ITEM_METHODS = Set.of(HttpUtils.GET, HttpUtils.PUT, HttpUtils.DELETE);
@@ -29,7 +28,6 @@ public final class LinksHandler implements HttpHandler {
 
     private final Dao<String> links;
     private final String shortLinkPrefix;
-    private final SecureRandom random = new SecureRandom();
     private final Lock writeLock = new ReentrantLock();
 
     public LinksHandler(Dao<String> links, int port) {
@@ -173,12 +171,8 @@ public final class LinksHandler implements HttpHandler {
         }
     }
 
-    private String newId() {
-        StringBuilder id = new StringBuilder(ID_LENGTH);
-        for (int i = 0; i < ID_LENGTH; i++) {
-            id.append(ALPHABET.charAt(random.nextInt(ALPHABET.length())));
-        }
-        return id.toString();
+    private static String newId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, ID_LENGTH);
     }
 
     private static boolean isValidId(String id) {

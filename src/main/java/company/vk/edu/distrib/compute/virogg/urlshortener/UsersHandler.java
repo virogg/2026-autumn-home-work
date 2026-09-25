@@ -8,7 +8,7 @@ import com.sun.net.httpserver.HttpHandler;
 import company.vk.edu.distrib.compute.Dao;
 
 public final class UsersHandler implements HttpHandler {
-    private static final String PATH = "/internal/users";
+    static final String PATH = "/internal/users";
 
     private final Dao<String> users;
 
@@ -18,12 +18,7 @@ public final class UsersHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
-        if (!PATH.equals(exchange.getRequestURI().getPath())) {
-            HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
-            return;
-        }
-        if (!HttpUtils.POST.equals(exchange.getRequestMethod())) {
-            HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_METHOD);
+        if (!HttpUtils.accepts(exchange, PATH, HttpUtils.POST)) {
             return;
         }
         String line = HttpUtils.readBody(exchange).lines().findFirst().orElse("");
