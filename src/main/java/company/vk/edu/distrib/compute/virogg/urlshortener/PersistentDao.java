@@ -31,24 +31,24 @@ public final class PersistentDao implements Dao<String> {
 
     private final Path dir;
     private final ConcurrentMap<String, String> data = new ConcurrentHashMap<>();
-    private final FileChannel lock;
-    private final FileChannel log;
+    private final FileChannel lockFile;
+    private final FileChannel journal;
     private final Lock writeLock = new ReentrantLock();
 
     public PersistentDao(Path dir, String fileName) throws IOException {
         this.dir = Files.createDirectories(dir);
-        this.lock = FileChannel.open(dir.resolve(fileName + ".lock"),
+        this.lockFile = FileChannel.open(dir.resolve(fileName + ".lock"),
             StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         try {
-            acquire(lock, fileName);
+            acquire(lockFile, fileName);
             Path file = dir.resolve(fileName);
             if (Files.exists(file)) {
                 replay(file);
             }
             compact(file, dir.resolve(fileName + ".tmp"));
-            this.log = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            this.journal = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException | RuntimeException e) {
-            lock.close();
+            lockFile.close();
             throw e;
         }
     }
@@ -95,20 +95,20 @@ public final class PersistentDao implements Dao<String> {
     @Override
     public void close() throws IOException {
         writeLock.lock();
-        try (lock) {
-            log.close();
+        try (lockFile) {
+            journal.close();
         } finally {
             writeLock.unlock();
         }
     }
 
     private void append(String record) throws IOException {
-        long size = log.size();
+        long size = journal.size();
         try {
-            writeFully(log, record);
-            log.force(false);
+            writeFully(journal, record);
+            journal.force(false);
         } catch (IOException e) {
-            log.truncate(size);
+            journal.truncate(size);
             throw e;
         }
     }
@@ -144,9 +144,9 @@ public final class PersistentDao implements Dao<String> {
         }
     }
 
-    private static void acquire(FileChannel lock, String fileName) throws IOException {
+    private static void acquire(FileChannel lockFile, String fileName) throws IOException {
         try {
-            if (lock.tryLock() != null) {
+            if (lockFile.tryLock() != null) {
                 return;
             }
         } catch (OverlappingFileLockException expected) {
