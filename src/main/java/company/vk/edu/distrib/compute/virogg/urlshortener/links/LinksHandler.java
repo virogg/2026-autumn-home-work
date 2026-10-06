@@ -1,36 +1,30 @@
-package company.vk.edu.distrib.compute.virogg.urlshortener;
+package company.vk.edu.distrib.compute.virogg.urlshortener.links;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.net.IDN;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import company.vk.edu.distrib.compute.Dao;
+import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
-public final class LinksHandler implements HttpHandler {
+final class LinksHandler implements HttpHandler {
     static final String BASE_PATH = "/v0/links";
     private static final String ITEM_PREFIX = BASE_PATH + "/";
     private static final int ID_LENGTH = 10;
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{" + ID_LENGTH + "}");
     private static final Set<String> ITEM_METHODS = Set.of(HttpUtils.GET, HttpUtils.PUT, HttpUtils.DELETE);
-    private static final Pattern AUTHORITY = Pattern.compile("(?:[^@]*@)?([^:@\\[\\]]+)(?::\\d*)?");
 
     private final Dao<String> links;
     private final String shortLinkPrefix;
-    private final Lock writeLock = new ReentrantLock();
 
-    public LinksHandler(Dao<String> links, int port) {
+    LinksHandler(Dao<String> links, int port) {
         this.links = links;
         this.shortLinkPrefix = "http://localhost:" + port + "/";
     }
@@ -89,7 +83,7 @@ public final class LinksHandler implements HttpHandler {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
             return;
         }
-        URI target = toAsciiUri(link);
+        URI target = LinkUrlUtils.toAsciiUri(link);
         exchange.getResponseHeaders().set("Location", target == null ? link : target.toASCIIString());
         HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_MOVED_PERM);
     }
@@ -127,40 +121,25 @@ public final class LinksHandler implements HttpHandler {
         return null;
     }
 
-    private String storeWithNewId(String link) throws IOException {
-        writeLock.lock();
-        try {
-            String id = newId();
-            while (find(id) != null) {
-                id = newId();
-            }
-            links.upsert(id, link);
-            return id;
-        } finally {
-            writeLock.unlock();
+    private synchronized String storeWithNewId(String link) throws IOException {
+        String id = newId();
+        while (find(id) != null) {
+            id = newId();
         }
+        links.upsert(id, link);
+        return id;
     }
 
-    private boolean replaceExisting(String id, String link) throws IOException {
-        writeLock.lock();
-        try {
-            if (find(id) == null) {
-                return false;
-            }
-            links.upsert(id, link);
-            return true;
-        } finally {
-            writeLock.unlock();
+    private synchronized boolean replaceExisting(String id, String link) throws IOException {
+        if (find(id) == null) {
+            return false;
         }
+        links.upsert(id, link);
+        return true;
     }
 
-    private void remove(String id) throws IOException {
-        writeLock.lock();
-        try {
-            links.delete(id);
-        } finally {
-            writeLock.unlock();
-        }
+    private synchronized void remove(String id) throws IOException {
+        links.delete(id);
     }
 
     private @Nullable String find(String id) throws IOException {
@@ -180,32 +159,6 @@ public final class LinksHandler implements HttpHandler {
     }
 
     private static boolean isValidLink(String link) {
-        return toAsciiUri(link) != null;
-    }
-
-    private static @Nullable URI toAsciiUri(String link) {
-        try {
-            URI uri = new URI(link);
-            String scheme = uri.getScheme();
-            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                return null;
-            }
-            if (uri.getHost() != null) {
-                return uri;
-            }
-            String authority = uri.getRawAuthority();
-            Matcher matcher = AUTHORITY.matcher(authority == null ? "" : authority);
-            if (!matcher.matches()) {
-                return null;
-            }
-            int offset = scheme.length() + "://".length();
-            int start = offset + matcher.start(1);
-            int end = offset + matcher.end(1);
-            String asciiHost = IDN.toASCII(link.substring(start, end), IDN.USE_STD3_ASCII_RULES);
-            URI ascii = new URI(link.substring(0, start) + asciiHost + link.substring(end));
-            return ascii.getHost() == null ? null : ascii;
-        } catch (URISyntaxException | IllegalArgumentException e) {
-            return null;
-        }
+        return LinkUrlUtils.toAsciiUri(link) != null;
     }
 }
