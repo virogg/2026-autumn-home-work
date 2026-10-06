@@ -9,6 +9,8 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 final class LinkUrlUtils {
+    private static final String HTTP_SCHEME = "http";
+    private static final String HTTPS_SCHEME = "https";
     private static final Pattern AUTHORITY = Pattern.compile("(?:[^@]*@)?([^:@\\[\\]]+)(?::\\d*)?");
 
     private LinkUrlUtils() {
@@ -18,7 +20,7 @@ final class LinkUrlUtils {
         try {
             URI uri = new URI(link);
             String scheme = uri.getScheme();
-            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            if (!HTTP_SCHEME.equalsIgnoreCase(scheme) && !HTTPS_SCHEME.equalsIgnoreCase(scheme)) {
                 return null;
             }
             if (uri.getHost() != null) {

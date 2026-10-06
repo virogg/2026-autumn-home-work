@@ -15,6 +15,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32;
 
 import company.vk.edu.distrib.compute.Dao;
@@ -26,6 +27,7 @@ public final class PersistentByteDao implements Dao<byte[]> {
     private static final byte DELETE = 1;
 
     private final Path directory;
+    private final ReentrantLock operations = new ReentrantLock();
     private final ConcurrentMap<String, byte[]> data = new ConcurrentHashMap<>();
     private final FileChannel lockFile;
     private final FileChannel journal;
@@ -54,46 +56,71 @@ public final class PersistentByteDao implements Dao<byte[]> {
     }
 
     @Override
-    public synchronized byte[] get(String key) throws IOException {
-        requireKey(key);
-        ensureOpen();
-        byte[] value = data.get(key);
-        if (value == null) {
-            throw new NoSuchElementException("No value for key " + key);
+    public byte[] get(String key) throws IOException {
+        operations.lock();
+        try {
+            requireKey(key);
+            ensureOpen();
+            byte[] value = data.get(key);
+            if (value == null) {
+                throw new NoSuchElementException("No value for key " + key);
+            }
+            return value.clone();
+        } finally {
+            operations.unlock();
         }
-        return value.clone();
     }
 
     @Override
-    public synchronized void upsert(String key, byte[] value) throws IOException {
-        requireKey(key);
-        ensureOpen();
-        byte[] copy = Objects.requireNonNull(value, "value").clone();
-        append(key, copy, UPSERT);
-        data.put(key, copy);
-    }
-
-    @Override
-    public synchronized void delete(String key) throws IOException {
-        requireKey(key);
-        ensureOpen();
-        append(key, new byte[0], DELETE);
-        data.remove(key);
-    }
-
-    public synchronized boolean isWritable() {
-        return !closed && !failed && !writeFailed && journal.isOpen() && lockFile.isOpen()
-                && Files.isWritable(directory) && Files.isWritable(directory.resolve("kv.log"));
-    }
-
-    @Override
-    public synchronized void close() throws IOException {
-        if (closed) {
-            return;
+    public void upsert(String key, byte[] value) throws IOException {
+        operations.lock();
+        try {
+            requireKey(key);
+            ensureOpen();
+            byte[] copy = Objects.requireNonNull(value, "value").clone();
+            append(key, copy, UPSERT);
+            data.put(key, copy);
+        } finally {
+            operations.unlock();
         }
-        closed = true;
-        try (lockFile) {
-            journal.close();
+    }
+
+    @Override
+    public void delete(String key) throws IOException {
+        operations.lock();
+        try {
+            requireKey(key);
+            ensureOpen();
+            append(key, new byte[0], DELETE);
+            data.remove(key);
+        } finally {
+            operations.unlock();
+        }
+    }
+
+    public boolean isWritable() {
+        operations.lock();
+        try {
+            return !closed && !failed && !writeFailed && journal.isOpen() && lockFile.isOpen()
+                    && Files.isWritable(directory) && Files.isWritable(directory.resolve("kv.log"));
+        } finally {
+            operations.unlock();
+        }
+    }
+
+    @Override
+    public void close() throws IOException {
+        operations.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            try (lockFile) {
+                journal.close();
+            }
+        } finally {
+            operations.unlock();
         }
     }
 
@@ -154,24 +181,29 @@ public final class PersistentByteDao implements Dao<byte[]> {
                 truncateTail(position);
                 return;
             }
-            ByteBuffer record = ByteBuffer.allocate(length);
-            record.put(header.array());
-            readFully(record, position + HEADER_SIZE);
-            RecordCodec.verifyChecksum(record);
-            record.flip().position(HEADER_SIZE);
-            byte[] keyBytes = new byte[keyLength];
-            record.get(keyBytes);
-            String key = RecordCodec.decodeKey(keyBytes);
-            if (operation == DELETE) {
-                data.remove(key);
-            } else {
-                byte[] value = new byte[valueLength];
-                record.get(value);
-                data.put(key, value);
-            }
+            readAndApplyRecord(header, position, length, keyLength, valueLength, operation);
             position += length;
         }
         journal.position(position);
+    }
+
+    private void readAndApplyRecord(ByteBuffer header, long position, int length, int keyLength,
+                                   int valueLength, byte operation) throws IOException {
+        ByteBuffer record = ByteBuffer.allocate(length);
+        record.put(header.array());
+        readFully(record, position + HEADER_SIZE);
+        RecordCodec.verifyChecksum(record);
+        record.flip().position(HEADER_SIZE);
+        byte[] keyBytes = new byte[keyLength];
+        record.get(keyBytes);
+        String key = RecordCodec.decodeKey(keyBytes);
+        if (operation == DELETE) {
+            data.remove(key);
+        } else {
+            byte[] value = new byte[valueLength];
+            record.get(value);
+            data.put(key, value);
+        }
     }
 
     private void readFully(ByteBuffer buffer, long position) throws IOException {
@@ -192,7 +224,8 @@ public final class PersistentByteDao implements Dao<byte[]> {
     }
 
     private static void requireKey(String key) {
-        if (Objects.requireNonNull(key, "key").isEmpty()) {
+        Objects.requireNonNull(key, "key");
+        if (key.isEmpty()) {
             throw new IllegalArgumentException("Key must not be empty");
         }
     }
@@ -235,9 +268,13 @@ public final class PersistentByteDao implements Dao<byte[]> {
                 throws IOException {
             long expectedLength = (long) RECORD_OVERHEAD + keyLength + valueLength;
             if (keyLength <= 0 || valueLength < 0 || length != expectedLength
-                    || (operation != UPSERT && operation != DELETE) || (operation == DELETE && valueLength != 0)) {
+                    || !validOperation(operation, valueLength)) {
                 throw new IOException("Invalid journal record header");
             }
+        }
+
+        private static boolean validOperation(byte operation, int valueLength) {
+            return operation == UPSERT || operation == DELETE && valueLength == 0;
         }
 
         private static void verifyChecksum(ByteBuffer record) throws IOException {

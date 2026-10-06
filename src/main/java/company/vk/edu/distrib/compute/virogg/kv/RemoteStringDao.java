@@ -14,15 +14,17 @@ import java.util.NoSuchElementException;
 import company.vk.edu.distrib.compute.Dao;
 
 public final class RemoteStringDao implements Dao<String> {
+    private static final int MIN_PORT = 1;
+    private static final int MAX_PORT = 65535;
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
     private final String entityUrl;
     private final HttpClient client;
 
     public RemoteStringDao(int port) {
-        if (port < 1 || port > 65535) {
+        if (port < MIN_PORT || port > MAX_PORT) {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         }
-        entityUrl = "http://localhost:" + port + KvApiConstants.ENTITY_PATH + "?id=";
+        entityUrl = "http://localhost:" + port + KvApiConstants.ENTITY_PATH + '?' + KvApiConstants.ID_PARAMETER + '=';
         client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 

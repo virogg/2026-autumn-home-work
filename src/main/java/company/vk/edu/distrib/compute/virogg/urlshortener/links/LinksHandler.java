@@ -6,6 +6,7 @@ import java.net.URI;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -16,17 +17,19 @@ import org.jspecify.annotations.Nullable;
 
 final class LinksHandler implements HttpHandler {
     static final String BASE_PATH = "/v0/links";
-    private static final String ITEM_PREFIX = BASE_PATH + "/";
+    private static final char PATH_SEPARATOR = '/';
+    private static final String ITEM_PREFIX = BASE_PATH + PATH_SEPARATOR;
     private static final int ID_LENGTH = 10;
     private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{" + ID_LENGTH + "}");
     private static final Set<String> ITEM_METHODS = Set.of(HttpUtils.GET, HttpUtils.PUT, HttpUtils.DELETE);
 
     private final Dao<String> links;
     private final String shortLinkPrefix;
+    private final ReentrantLock writeLock = new ReentrantLock();
 
     LinksHandler(Dao<String> links, int port) {
         this.links = links;
-        this.shortLinkPrefix = "http://localhost:" + port + "/";
+        this.shortLinkPrefix = "http://localhost:" + port + PATH_SEPARATOR;
     }
 
     @Override
@@ -70,7 +73,7 @@ final class LinksHandler implements HttpHandler {
             return;
         }
         String id = exchange.getRequestURI().getPath().substring(1);
-        if (id.isEmpty() || id.indexOf('/') >= 0) {
+        if (id.isEmpty() || id.indexOf(PATH_SEPARATOR) >= 0) {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_NOT_FOUND);
             return;
         }
@@ -121,25 +124,40 @@ final class LinksHandler implements HttpHandler {
         return null;
     }
 
-    private synchronized String storeWithNewId(String link) throws IOException {
-        String id = newId();
-        while (find(id) != null) {
-            id = newId();
+    private String storeWithNewId(String link) throws IOException {
+        writeLock.lock();
+        try {
+            String id = newId();
+            while (find(id) != null) {
+                id = newId();
+            }
+            links.upsert(id, link);
+            return id;
+        } finally {
+            writeLock.unlock();
         }
-        links.upsert(id, link);
-        return id;
     }
 
-    private synchronized boolean replaceExisting(String id, String link) throws IOException {
-        if (find(id) == null) {
-            return false;
+    private boolean replaceExisting(String id, String link) throws IOException {
+        writeLock.lock();
+        try {
+            if (find(id) == null) {
+                return false;
+            }
+            links.upsert(id, link);
+            return true;
+        } finally {
+            writeLock.unlock();
         }
-        links.upsert(id, link);
-        return true;
     }
 
-    private synchronized void remove(String id) throws IOException {
-        links.delete(id);
+    private void remove(String id) throws IOException {
+        writeLock.lock();
+        try {
+            links.delete(id);
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     private @Nullable String find(String id) throws IOException {
