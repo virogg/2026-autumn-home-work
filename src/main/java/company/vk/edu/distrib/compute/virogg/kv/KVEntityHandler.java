@@ -41,6 +41,10 @@ final class KVEntityHandler implements HttpHandler {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_REQUEST);
             return;
         }
+        execute(exchange, method, key);
+    }
+
+    private void execute(HttpExchange exchange, String method, String key) throws IOException {
         switch (method) {
             case HttpUtils.GET -> get(exchange, key);
             case HttpUtils.PUT -> {
@@ -76,20 +80,24 @@ final class KVEntityHandler implements HttpHandler {
         }
         String key = null;
         for (String parameter : query.split("&", -1)) {
-            int separator = parameter.indexOf('=');
-            String name = separator < 0 ? parameter : parameter.substring(0, separator);
-            if (!"id".equals(decode(name))) {
-                continue;
-            }
-            if (key != null || separator < 0) {
-                throw new IllegalArgumentException("Duplicate or missing id");
-            }
-            key = decode(parameter.substring(separator + 1));
+            key = parseParameter(parameter, key);
         }
         if (key == null || key.isEmpty()) {
             throw new IllegalArgumentException("Missing or empty id");
         }
         return key;
+    }
+
+    private static @Nullable String parseParameter(String parameter, @Nullable String key) {
+        int separator = parameter.indexOf('=');
+        String name = separator < 0 ? parameter : parameter.substring(0, separator);
+        if (!KvApiConstants.ID_PARAMETER.equals(decode(name))) {
+            return key;
+        }
+        if (key != null || separator < 0) {
+            throw new IllegalArgumentException("Duplicate or missing id");
+        }
+        return decode(parameter.substring(separator + 1));
     }
 
     private static String decode(String encoded) {
