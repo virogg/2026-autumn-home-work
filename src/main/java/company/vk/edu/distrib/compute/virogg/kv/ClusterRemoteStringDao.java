@@ -1,9 +1,11 @@
 package company.vk.edu.distrib.compute.virogg.kv;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import company.vk.edu.distrib.compute.Dao;
 
@@ -14,11 +16,8 @@ final class ClusterRemoteStringDao implements Dao<String> {
     ClusterRemoteStringDao(int... ports) {
         int[] clusterPorts = ports.clone();
         ring = new ConsistentHashRing(clusterPorts);
-        Map<Integer, RemoteStringDao> clientsByPort = new ConcurrentHashMap<>();
-        for (int port : clusterPorts) {
-            clientsByPort.put(port, new RemoteStringDao(port));
-        }
-        clients = Map.copyOf(clientsByPort);
+        clients = Arrays.stream(clusterPorts).boxed()
+                .collect(Collectors.toUnmodifiableMap(Function.identity(), RemoteStringDao::new));
     }
 
     @Override

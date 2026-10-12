@@ -20,15 +20,7 @@ final class ConsistentHashRing {
         if (sortedPorts.length == 0) {
             throw new IllegalArgumentException("Cluster must have at least one port");
         }
-        for (int i = 0; i < sortedPorts.length; i++) {
-            int port = sortedPorts[i];
-            if (port < MIN_PORT || port > MAX_PORT) {
-                throw new IllegalArgumentException("Port must be between 1 and 65535");
-            }
-            if (i > 0 && port == sortedPorts[i - 1]) {
-                throw new IllegalArgumentException("Cluster ports must be unique");
-            }
-        }
+        validateSortedPorts(sortedPorts);
         for (int port : sortedPorts) {
             for (int replica = 0; replica < VIRTUAL_NODES; replica++) {
                 ring.put(hash(port + ":" + replica), port);
@@ -45,6 +37,18 @@ final class ConsistentHashRing {
             owner = ring.firstEntry();
         }
         return owner.getValue();
+    }
+
+    private static void validateSortedPorts(int... sortedPorts) {
+        for (int i = 0; i < sortedPorts.length; i++) {
+            int port = sortedPorts[i];
+            if (port < MIN_PORT || port > MAX_PORT) {
+                throw new IllegalArgumentException("Port must be between 1 and 65535");
+            }
+            if (i > 0 && port == sortedPorts[i - 1]) {
+                throw new IllegalArgumentException("Cluster ports must be unique");
+            }
+        }
     }
 
     private static long hash(String value) {
