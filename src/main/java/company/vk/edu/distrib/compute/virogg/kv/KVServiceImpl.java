@@ -16,7 +16,7 @@ import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
 public final class KVServiceImpl implements KVService {
-    private static final int SHUTDOWN_DELAY_SECONDS = 5;
+    private static final int SHUTDOWN_DELAY_SECONDS = 1;
     private final int port;
     private final Path directory;
     private final boolean multithreaded;

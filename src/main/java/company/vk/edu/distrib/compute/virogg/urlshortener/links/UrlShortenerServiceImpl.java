@@ -19,7 +19,7 @@ import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
 public final class UrlShortenerServiceImpl implements UrlShortenerService {
-    private static final int SHUTDOWN_DELAY_SECONDS = 5;
+    private static final int SHUTDOWN_DELAY_SECONDS = 1;
     private static final String STATUS_PATH = "/v0/status";
     private static final String STATUS_KEY = "__urlshortener_status__";
 
