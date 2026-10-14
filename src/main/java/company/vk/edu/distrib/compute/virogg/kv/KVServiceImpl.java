@@ -16,6 +16,7 @@ import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
 public final class KVServiceImpl implements KVService {
+    private static final int SHUTDOWN_DELAY_SECONDS = 5;
     private final int port;
     private final Path directory;
     private final boolean multithreaded;
@@ -99,7 +100,7 @@ public final class KVServiceImpl implements KVService {
     private void releaseResources() throws IOException {
         try (PersistentByteDao _ = dao; ExecutorService _ = executor) {
             if (server != null) {
-                server.stop(0);
+                server.stop(SHUTDOWN_DELAY_SECONDS);
             }
         } finally {
             server = null;
