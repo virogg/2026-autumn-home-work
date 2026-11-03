@@ -2,8 +2,6 @@ package company.vk.edu.distrib.compute.virogg.kv;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -17,20 +15,20 @@ public final class RemoteStringDao implements Dao<String> {
     private static final int MIN_PORT = 1;
     private static final int MAX_PORT = 65535;
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
-    private final String entityUrl;
+    private final int port;
     private final HttpClient client;
 
     public RemoteStringDao(int port) {
         if (port < MIN_PORT || port > MAX_PORT) {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         }
-        entityUrl = "http://localhost:" + port + KvApiConstants.ENTITY_PATH + '?' + KvApiConstants.ID_PARAMETER + '=';
+        this.port = port;
         client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
     @Override
     public String get(String key) throws IOException {
-        HttpResponse<String> response = send(request(key).GET().build());
+        HttpResponse<String> response = send(KvRequestFactory.entity(port, key, TIMEOUT).GET().build());
         if (response.statusCode() == HttpURLConnection.HTTP_NOT_FOUND) {
             throw new NoSuchElementException(key);
         }
@@ -40,27 +38,20 @@ public final class RemoteStringDao implements Dao<String> {
 
     @Override
     public void upsert(String key, String value) throws IOException {
-        HttpRequest httpRequest = request(key)
+        HttpRequest httpRequest = KvRequestFactory.entity(port, key, TIMEOUT)
                 .PUT(HttpRequest.BodyPublishers.ofString(value, StandardCharsets.UTF_8)).build();
         requireStatus(send(httpRequest), HttpURLConnection.HTTP_CREATED);
     }
 
     @Override
     public void delete(String key) throws IOException {
-        requireStatus(send(request(key).DELETE().build()), HttpURLConnection.HTTP_ACCEPTED);
+        requireStatus(send(KvRequestFactory.entity(port, key, TIMEOUT).DELETE().build()),
+                HttpURLConnection.HTTP_ACCEPTED);
     }
 
     @Override
     public void close() {
         client.close();
-    }
-
-    private HttpRequest.Builder request(String key) {
-        if (key.isEmpty()) {
-            throw new IllegalArgumentException("Key must not be empty");
-        }
-        URI uri = URI.create(entityUrl + URLEncoder.encode(key, StandardCharsets.UTF_8));
-        return HttpRequest.newBuilder(uri).timeout(TIMEOUT);
     }
 
     private HttpResponse<String> send(HttpRequest httpRequest) throws IOException {

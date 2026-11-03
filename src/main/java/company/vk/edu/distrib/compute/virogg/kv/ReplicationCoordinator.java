@@ -2,12 +2,9 @@ package company.vk.edu.distrib.compute.virogg.kv;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -118,10 +115,7 @@ final class ReplicationCoordinator implements AutoCloseable {
             if (port == localPort) {
                 return local(dao, method, key, body);
             }
-            String encoded = URLEncoder.encode(key, StandardCharsets.UTF_8);
-            HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port
-                            + KvApiConstants.ENTITY_PATH + "?id=" + encoded))
-                    .timeout(REQUEST_TIMEOUT)
+            HttpRequest request = KvRequestFactory.entity(port, key, REQUEST_TIMEOUT)
                     .header(KvApiConstants.REPLICA_HEADER, "true")
                     .method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build();
             return remote(request);
@@ -181,7 +175,8 @@ final class ReplicationCoordinator implements AutoCloseable {
 
     @Override
     public void close() {
-        try (HttpClient _ = client; ExecutorService _ = replicas) {
+        try (HttpClient _ = client) {
+            replicas.close();
         }
     }
 

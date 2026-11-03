@@ -49,12 +49,16 @@ final class KVEntityHandler implements HttpHandler {
             HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_BAD_REQUEST);
             return;
         }
+        respond(exchange, dispatch(exchange, method, query, config));
+    }
+
+    private ReplicaResponse dispatch(HttpExchange exchange, String method, KvEntityQuery query,
+                                     @Nullable ReplicationConfig config) throws IOException {
         byte[] body = HttpUtils.PUT.equals(method) ? exchange.getRequestBody().readAllBytes() : new byte[0];
         boolean internal = "true".equals(exchange.getRequestHeaders().getFirst(KvApiConstants.REPLICA_HEADER));
-        ReplicaResponse result = coordinator == null || config == null || config.isStandalone() || internal
+        return coordinator == null || config == null || config.isStandalone() || internal
                 ? ReplicationCoordinator.local(dao, method, query.key(), body)
                 : coordinator.execute(method, query.key(), body, query.ack(), config);
-        respond(exchange, result);
     }
 
     private static void respond(HttpExchange exchange, ReplicaResponse response) throws IOException {

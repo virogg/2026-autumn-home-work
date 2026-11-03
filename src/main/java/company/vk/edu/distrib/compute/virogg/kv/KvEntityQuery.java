@@ -11,11 +11,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
 
 record KvEntityQuery(String key, int ack) {
+    private static final int MIN_REPLICA_COUNT = 1;
+
     static KvEntityQuery parse(@Nullable String rawQuery, int replicationFactor) {
         if (rawQuery == null) {
             throw new IllegalArgumentException("Missing id");
         }
-        if (replicationFactor < 1) {
+        if (replicationFactor < MIN_REPLICA_COUNT) {
             throw new IllegalArgumentException("Replication factor must be positive");
         }
         Map<String, String> parameters = parseParameters(rawQuery);
@@ -24,8 +26,8 @@ record KvEntityQuery(String key, int ack) {
             throw new IllegalArgumentException("Missing or empty id");
         }
         String acks = parameters.get("ack");
-        int ack = acks == null ? 1 : Integer.parseInt(acks);
-        if (ack < 1 || ack > replicationFactor) {
+        int ack = acks == null ? MIN_REPLICA_COUNT : Integer.parseInt(acks);
+        if (ack < MIN_REPLICA_COUNT || ack > replicationFactor) {
             throw new IllegalArgumentException("Ack count must be less or equal to the replication factor");
         }
         return new KvEntityQuery(key, ack);
