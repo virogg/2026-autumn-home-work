@@ -11,6 +11,7 @@ import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
 final class KVEntityHandler implements HttpHandler {
+    private static final int MAX_BODY_BYTES = 1024 * 1024;
     private final Dao<byte[]> dao;
     @Nullable
     private final ReplicationCoordinator coordinator;
@@ -54,7 +55,11 @@ final class KVEntityHandler implements HttpHandler {
 
     private ReplicaResponse dispatch(HttpExchange exchange, String method, KvEntityQuery query,
                                      @Nullable ReplicationConfig config) throws IOException {
-        byte[] body = HttpUtils.PUT.equals(method) ? exchange.getRequestBody().readAllBytes() : new byte[0];
+        byte[] body = HttpUtils.PUT.equals(method)
+                ? exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1) : new byte[0];
+        if (body.length > MAX_BODY_BYTES) {
+            return new ReplicaResponse(HttpURLConnection.HTTP_ENTITY_TOO_LARGE, new byte[0]);
+        }
         boolean internal = "true".equals(exchange.getRequestHeaders().getFirst(KvApiConstants.REPLICA_HEADER));
         return coordinator == null || config == null || config.isStandalone() || internal
                 ? ReplicationCoordinator.local(dao, method, query.key(), body)
@@ -68,7 +73,7 @@ final class KVEntityHandler implements HttpHandler {
         }
         byte[] value = response.body();
         exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-        exchange.sendResponseHeaders(response.status(), value.length == 0 ? -1 : value.length);
+        exchange.sendResponseHeaders(response.status(), value.length == 0 ? HttpUtils.NO_BODY : value.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(value);
         }
