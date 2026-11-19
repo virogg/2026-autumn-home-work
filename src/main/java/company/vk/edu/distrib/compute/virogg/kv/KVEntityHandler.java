@@ -17,6 +17,7 @@ import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
 final class KVEntityHandler implements HttpHandler {
+    private static final int MAX_BODY_BYTES = 1024 * 1024;
     private final Dao<byte[]> dao;
 
     KVEntityHandler(Dao<byte[]> dao) {
@@ -48,7 +49,12 @@ final class KVEntityHandler implements HttpHandler {
         switch (method) {
             case HttpUtils.GET -> get(exchange, key);
             case HttpUtils.PUT -> {
-                dao.upsert(key, exchange.getRequestBody().readAllBytes());
+                byte[] value = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
+                if (value.length > MAX_BODY_BYTES) {
+                    HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_ENTITY_TOO_LARGE);
+                    return;
+                }
+                dao.upsert(key, value);
                 HttpUtils.sendEmpty(exchange, HttpURLConnection.HTTP_CREATED);
             }
             case HttpUtils.DELETE -> {
@@ -68,7 +74,7 @@ final class KVEntityHandler implements HttpHandler {
             return;
         }
         exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-        exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, value.length == 0 ? -1 : value.length);
+        exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, value.length == 0 ? HttpUtils.NO_BODY : value.length);
         try (OutputStream response = exchange.getResponseBody()) {
             response.write(value);
         }

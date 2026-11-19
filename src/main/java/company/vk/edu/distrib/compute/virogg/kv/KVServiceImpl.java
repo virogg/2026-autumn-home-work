@@ -20,6 +20,7 @@ public final class KVServiceImpl implements KVService {
     private final Path directory;
     private final boolean multithreaded;
     private final ReentrantLock reentrantLock = new ReentrantLock();
+    private static final int SHUTDOWN_DELAY_SECONDS = 1;
     private boolean startAttempted;
     @Nullable
     private PersistentByteDao dao;
@@ -99,7 +100,7 @@ public final class KVServiceImpl implements KVService {
     private void releaseResources() throws IOException {
         try (PersistentByteDao _ = dao; ExecutorService _ = executor) {
             if (server != null) {
-                server.stop(0);
+                server.stop(SHUTDOWN_DELAY_SECONDS);
             }
         } finally {
             server = null;
