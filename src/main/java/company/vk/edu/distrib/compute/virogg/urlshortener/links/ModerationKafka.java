@@ -90,7 +90,9 @@ final class ModerationKafka {
             Thread.currentThread().interrupt();
             return;
         } catch (IOException | ExecutionException | KafkaException e) {
-            log.warn("Could not process {} at offset {}", record.topic(), record.offset(), e);
+            if (log.isWarnEnabled()) {
+                log.warn("Could not process {} at offset {}", record.topic(), record.offset(), e);
+            }
             consumer.seek(new TopicPartition(record.topic(), record.partition()), record.offset());
             Thread.sleep(POLL_INTERVAL);
             return;
@@ -100,7 +102,9 @@ final class ModerationKafka {
         } catch (InterruptException expected) {
             Thread.currentThread().interrupt();
         } catch (KafkaException e) {
-            log.warn("Could not commit offset for {}", record.topic(), e);
+            if (log.isWarnEnabled()) {
+                log.warn("Could not commit offset for {}", record.topic(), e);
+            }
         }
     }
 

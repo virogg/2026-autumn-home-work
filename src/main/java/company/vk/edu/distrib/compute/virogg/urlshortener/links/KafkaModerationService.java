@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import company.vk.edu.distrib.compute.moderation.LinkCreatedEvent;
 import company.vk.edu.distrib.compute.moderation.ModerationResultEvent;
@@ -27,6 +29,7 @@ final class KafkaModerationService implements ModerationService {
 
     private final String bootstrapServers;
     private final List<String> bannedWords;
+    private final Lock lifecycle = new ReentrantLock();
     @Nullable
     private ExecutorService worker;
 
@@ -36,21 +39,30 @@ final class KafkaModerationService implements ModerationService {
     }
 
     @Override
-    public synchronized void start() {
-        if (worker != null) {
-            throw new IllegalStateException("Moderation service is already running");
+    public void start() {
+        lifecycle.lock();
+        try {
+            if (worker != null && !worker.isTerminated()) {
+                throw new IllegalStateException("Moderation service is already running");
+            }
+            ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+            worker = executor;
+            executor.execute(this::moderate);
+        } finally {
+            lifecycle.unlock();
         }
-        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        worker = executor;
-        executor.execute(this::moderate);
     }
 
     @Override
-    public synchronized void stop() {
-        if (worker != null) {
-            worker.shutdownNow();
-            worker.close();
-            worker = null;
+    public void stop() {
+        lifecycle.lock();
+        try {
+            if (worker != null && !worker.isTerminated()) {
+                worker.shutdownNow();
+                worker.close();
+            }
+        } finally {
+            lifecycle.unlock();
         }
     }
 

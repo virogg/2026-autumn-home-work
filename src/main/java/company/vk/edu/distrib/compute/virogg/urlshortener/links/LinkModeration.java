@@ -41,7 +41,7 @@ final class LinkModeration implements AutoCloseable {
     }
 
     void publish(LinkCreatedEvent event) {
-        if (!pending.offer(event)) {
+        if (!pending.offer(event) && log.isWarnEnabled()) {
             log.warn("Moderation queue is full for link {}", event.id());
         }
     }
@@ -72,7 +72,9 @@ final class LinkModeration implements AutoCloseable {
                 return;
             } catch (ExecutionException e) {
                 if (!(e.getCause() instanceof RetriableException)) {
-                    log.warn("Could not publish link {}", event.id(), e.getCause());
+                    if (log.isWarnEnabled()) {
+                        log.warn("Could not publish link {}", event.id(), e.getCause());
+                    }
                     return;
                 }
                 Thread.sleep(RETRY_DELAY);
@@ -85,7 +87,9 @@ final class LinkModeration implements AutoCloseable {
         try {
             result = ModerationKafka.readModerated(record);
         } catch (IllegalArgumentException | DateTimeException e) {
-            log.warn("Ignoring invalid moderation result at offset {}", record.offset(), e);
+            if (log.isWarnEnabled()) {
+                log.warn("Ignoring invalid moderation result at offset {}", record.offset(), e);
+            }
             return;
         }
         if (!result.passed()) {
