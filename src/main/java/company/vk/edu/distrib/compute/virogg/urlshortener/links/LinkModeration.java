@@ -46,7 +46,7 @@ final class LinkModeration implements AutoCloseable {
         }
     }
 
-    @SuppressWarnings("PMD.UseTryWithResources") // Kafka default producer close has no deadline
+    @SuppressWarnings("PMD.UseTryWithResources") // Kafka default producer close has no deadline 
     private void sendCreated() {
         try {
             KafkaProducer<byte[], byte[]> producer = ModerationKafka.producer(bootstrapServers);
