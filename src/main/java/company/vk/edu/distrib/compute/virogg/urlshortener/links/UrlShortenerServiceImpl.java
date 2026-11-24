@@ -29,6 +29,10 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
     private boolean lifecycleStarted;
     private boolean linksInjected;
     @Nullable
+    private String kafkaBootstrapServers;
+    @Nullable
+    private LinkModeration moderation;
+    @Nullable
     private Dao<String> links;
     @Nullable
     private PersistentDao users;
@@ -51,6 +55,19 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
             }
             links = dao;
             linksInjected = true;
+        } finally {
+            lifecycle.unlock();
+        }
+    }
+
+    @Override
+    public void setKafkaBootstrapServers(String bootstrapServers) {
+        lifecycle.lock();
+        try {
+            if (lifecycleStarted) {
+                throw new IllegalStateException("Service lifecycle has already started");
+            }
+            kafkaBootstrapServers = bootstrapServers;
         } finally {
             lifecycle.unlock();
         }
@@ -109,18 +126,27 @@ public final class UrlShortenerServiceImpl implements UrlShortenerService {
     private HttpServer createServer(Dao<String> linksDao, PersistentDao usersDao, ExecutorService workers)
         throws IOException {
         HttpServer httpServer = HttpServer.create(new InetSocketAddress(port), 0);
-        LinksHandler linksHandler = new LinksHandler(linksDao, port);
+        LinkModeration kafka = kafkaBootstrapServers == null ? null : new LinkModeration(kafkaBootstrapServers);
+        moderation = kafka;
+        LinksHandler linksHandler = new LinksHandler(linksDao, port, kafka);
         httpServer.createContext(STATUS_PATH, HttpUtils.safe(exchange -> status(exchange, linksDao, usersDao)));
         httpServer.createContext(LinksHandler.BASE_PATH, HttpUtils.safe(linksHandler))
             .setAuthenticator(new UsersAuthenticator(usersDao));
         httpServer.createContext(UsersHandler.PATH, HttpUtils.safe(new UsersHandler(usersDao)));
         httpServer.createContext("/", HttpUtils.safe(linksHandler::redirect));
         httpServer.setExecutor(workers);
+        if (kafka != null) {
+            kafka.start(linksHandler);
+        }
         httpServer.start();
         return httpServer;
     }
 
     private void releaseResources() {
+        if (moderation != null) {
+            moderation.close();
+            moderation = null;
+        }
         if (executor != null) {
             executor.close();
             executor = null;

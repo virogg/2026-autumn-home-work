@@ -3,6 +3,7 @@ package company.vk.edu.distrib.compute.virogg.urlshortener.links;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.time.Instant;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
@@ -12,6 +13,7 @@ import java.util.regex.Pattern;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import company.vk.edu.distrib.compute.Dao;
+import company.vk.edu.distrib.compute.moderation.LinkCreatedEvent;
 import company.vk.edu.distrib.compute.virogg.http.HttpUtils;
 import org.jspecify.annotations.Nullable;
 
@@ -26,10 +28,13 @@ final class LinksHandler implements HttpHandler {
     private final Dao<String> links;
     private final String shortLinkPrefix;
     private final ReentrantLock writeLock = new ReentrantLock();
+    @Nullable
+    private final LinkModeration moderation;
 
-    LinksHandler(Dao<String> links, int port) {
+    LinksHandler(Dao<String> links, int port, @Nullable LinkModeration moderation) {
         this.links = links;
         this.shortLinkPrefix = "http://localhost:" + port + PATH_SEPARATOR;
+        this.moderation = moderation;
     }
 
     @Override
@@ -94,7 +99,11 @@ final class LinksHandler implements HttpHandler {
     private void create(HttpExchange exchange) throws IOException {
         String link = readValidLink(exchange);
         if (link != null) {
-            HttpUtils.sendText(exchange, HttpURLConnection.HTTP_CREATED, shortLinkPrefix + storeWithNewId(link));
+            String id = storeWithNewId(link);
+            if (moderation != null) {
+                moderation.publish(new LinkCreatedEvent(id, link, Instant.now()));
+            }
+            HttpUtils.sendText(exchange, HttpURLConnection.HTTP_CREATED, shortLinkPrefix + id);
         }
     }
 
@@ -151,7 +160,7 @@ final class LinksHandler implements HttpHandler {
         }
     }
 
-    private void remove(String id) throws IOException {
+    void remove(String id) throws IOException {
         writeLock.lock();
         try {
             links.delete(id);
